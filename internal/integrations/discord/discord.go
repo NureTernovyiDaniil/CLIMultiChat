@@ -1,27 +1,29 @@
-package slack
+package discord
 
 import (
-	"CLIMultiChat/internal/formatter"
 	messengers "CLIMultiChat/internal/integrations"
 	"fmt"
 
-	"github.com/slack-go/slack"
+	"github.com/bwmarrin/discordgo"
 )
 
 type Client struct {
-	api            *slack.Client
+	session        *discordgo.Session
 	defaultChannel string
 }
 
 func NewClient(token, defaultChannel string) (messengers.Messenger, error) {
 	if token == "" {
-		return nil, fmt.Errorf("slack token is required")
+		return nil, fmt.Errorf("discord token is required")
 	}
 
-	api := slack.New(token)
+	session, err := discordgo.New("Bot " + token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Discord session: %w", err)
+	}
 
 	return &Client{
-		api:            api,
+		session:        session,
 		defaultChannel: defaultChannel,
 	}, nil
 }
@@ -34,22 +36,14 @@ func (c *Client) SendMessage(channel, message string) error {
 		channel = c.defaultChannel
 	}
 
-	// Convert markdown to Slack format
-	formattedMessage := formatter.ToSlackMarkdown(message)
-
-	_, _, err := c.api.PostMessage(
-		channel,
-		slack.MsgOptionText(formattedMessage, false),
-		slack.MsgOptionAsUser(true),
-	)
-
+	_, err := c.session.ChannelMessageSend(channel, message)
 	if err != nil {
-		return fmt.Errorf("failed to send message to Slack: %w", err)
+		return fmt.Errorf("failed to send message to Discord: %w", err)
 	}
 
 	return nil
 }
 
 func (c *Client) GetName() string {
-	return "Slack"
+	return "Discord"
 }
