@@ -3,6 +3,7 @@ package main
 import (
 	"CLIMultiChat/internal/config"
 	messengers "CLIMultiChat/internal/integrations"
+	"CLIMultiChat/internal/integrations/discord"
 	"CLIMultiChat/internal/integrations/slack"
 	"CLIMultiChat/internal/integrations/telegram"
 	"fmt"
@@ -29,13 +30,13 @@ func init() {
 var rootCmd = &cobra.Command{
 	Use:   "climessenger",
 	Short: "Відправка повідомлень у месенджери",
-	Long:  `Програма для відправки повідомлень у Slack та Telegram.`,
+	Long:  `Програма для відправки повідомлень у Slack, Telegram та Discord.`,
 }
 
 var sendCmd = &cobra.Command{
 	Use:   "send",
 	Short: "Відправити повідомлення",
-	Long:  `Відправити повідомлення у Slack або Telegram.`,
+	Long:  `Відправити повідомлення у Slack, Telegram або Discord.`,
 }
 
 var slackCmd = &cobra.Command{
@@ -106,10 +107,44 @@ var telegramCmd = &cobra.Command{
 	},
 }
 
+var discordCmd = &cobra.Command{
+	Use:   "discord [канал] [повідомлення]",
+	Short: "В Discord",
+	Long:  `Відправити повідомлення у Discord. Якщо канал не вказано, використовується стандартний.`,
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var channel, message string
+
+		if len(args) == 1 {
+			channel = ""
+			message = args[0]
+		} else {
+			channel = args[0]
+			message = args[1]
+		}
+
+		if err := cfg.ValidateDiscord(); err != nil {
+			return fmt.Errorf("discord configuration error: %w", err)
+		}
+
+		client, err := discord.NewClient(cfg.DiscordToken, cfg.DiscordChannel)
+		if err != nil {
+			return fmt.Errorf("failed to create Discord client: %w", err)
+		}
+
+		if err := client.SendMessage(channel, message); err != nil {
+			return err
+		}
+
+		fmt.Printf("Повідомлення надіслано у Discord\n")
+		return nil
+	},
+}
+
 var allCmd = &cobra.Command{
 	Use:   "all [повідомлення]",
 	Short: "Усі месенджери",
-	Long:  `Відправити одне повідомлення у всі месенджери (Slack і Telegram).`,
+	Long:  `Відправити одне повідомлення у всі месенджери (Slack, Telegram і Discord).`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		message := args[0]
@@ -145,6 +180,21 @@ var allCmd = &cobra.Command{
 			fmt.Println("Telegram не налаштовано, пропущено")
 		}
 
+		if cfg.ValidateDiscord() == nil {
+			client, err := discord.NewClient(cfg.DiscordToken, cfg.DiscordChannel)
+			if err != nil {
+				errors = append(errors, fmt.Errorf("discord: %w", err))
+			} else {
+				if err := client.SendMessage("", message); err != nil {
+					errors = append(errors, fmt.Errorf("Discord: %w", err))
+				} else {
+					fmt.Printf("Повідомлення надіслано у Discord\n")
+				}
+			}
+		} else {
+			fmt.Println("Discord не налаштовано, пропущено")
+		}
+
 		if len(errors) > 0 {
 			for _, err := range errors {
 				fmt.Fprintf(os.Stderr, "Помилка: %v\n", err)
@@ -159,6 +209,7 @@ var allCmd = &cobra.Command{
 func main() {
 	sendCmd.AddCommand(slackCmd)
 	sendCmd.AddCommand(telegramCmd)
+	sendCmd.AddCommand(discordCmd)
 	sendCmd.AddCommand(allCmd)
 	rootCmd.AddCommand(sendCmd)
 
