@@ -17,57 +17,86 @@ import (
 // - ```code block``` for code blocks
 // - [text](url) for links
 func ToTelegramMarkdown(text string) string {
-	// First, protect markdown syntax we want to keep
-	protectedPatterns := []struct {
-		pattern     *regexp.Regexp
-		placeholder string
-		matches     []string
-	}{
-		{regexp.MustCompile(`\*\*([^\*]+)\*\*`), "BOLD_%d_", nil},           // **bold**
-		{regexp.MustCompile(`\*([^\*]+)\*`), "ITALIC_%d_", nil},             // *italic*
-		{regexp.MustCompile(`_([^_]+)_`), "UNDERSCORE_%d_", nil},            // _italic_
-		{regexp.MustCompile("`([^`]+)`"), "CODE_%d_", nil},                  // `code`
-		{regexp.MustCompile("```([^`]+)```"), "CODEBLOCK_%d_", nil},         // ```code```
-		{regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`), "LINK_%d_", nil}, // [text](url)
-	}
-
 	result := text
 
-	// Extract and protect markdown patterns
-	for i := range protectedPatterns {
-		matches := protectedPatterns[i].pattern.FindAllString(result, -1)
-		protectedPatterns[i].matches = matches
+	// Store markdown elements with unique markers
+	type replacement struct {
+		original string
+		marker   string
+		final    string
+	}
 
-		for j, match := range matches {
-			placeholder := strings.Replace(protectedPatterns[i].placeholder, "%d", string(rune(j)), 1)
-			result = strings.Replace(result, match, placeholder, 1)
+	var replacements []replacement
+	counter := 0
+
+	// 1. Preserve code blocks ```...```
+	codeBlockRe := regexp.MustCompile("```([^`]+)```")
+	for _, match := range codeBlockRe.FindAllString(result, -1) {
+		marker := "\x00CODEBLOCK" + string(rune(counter)) + "\x00"
+		replacements = append(replacements, replacement{match, marker, match})
+		result = strings.Replace(result, match, marker, 1)
+		counter++
+	}
+
+	// 2. Preserve inline code `...`
+	codeRe := regexp.MustCompile("`([^`]+)`")
+	for _, match := range codeRe.FindAllString(result, -1) {
+		marker := "\x00CODE" + string(rune(counter)) + "\x00"
+		replacements = append(replacements, replacement{match, marker, match})
+		result = strings.Replace(result, match, marker, 1)
+		counter++
+	}
+
+	// 3. Preserve links [text](url)
+	linkRe := regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`)
+	for _, match := range linkRe.FindAllString(result, -1) {
+		marker := "\x00LINK" + string(rune(counter)) + "\x00"
+		replacements = append(replacements, replacement{match, marker, match})
+		result = strings.Replace(result, match, marker, 1)
+		counter++
+	}
+
+	// 4. Preserve bold text **...**
+	boldRe := regexp.MustCompile(`\*\*([^\*]+)\*\*`)
+	for _, match := range boldRe.FindAllString(result, -1) {
+		marker := "\x00BOLD" + string(rune(counter)) + "\x00"
+		// Convert **text** -> *text*
+		converted := boldRe.ReplaceAllString(match, "*$1*")
+		replacements = append(replacements, replacement{match, marker, converted})
+		result = strings.Replace(result, match, marker, 1)
+		counter++
+	}
+
+	// 5. Preserve italic _..._ or *...*
+	italicRe := regexp.MustCompile(`(?:^|[^\*])(\*[^\*]+\*)|(_[^_]+_)`)
+	for _, match := range italicRe.FindAllString(result, -1) {
+		// Remove possible leading character (not *)
+		cleanMatch := strings.TrimLeft(match, " \t\n\r")
+		if strings.HasPrefix(cleanMatch, "*") || strings.HasPrefix(cleanMatch, "_") {
+			marker := "\x00ITALIC" + string(rune(counter)) + "\x00"
+			// Convert to _text_
+			var converted string
+			if strings.HasPrefix(cleanMatch, "*") {
+				converted = regexp.MustCompile(`\*([^\*]+)\*`).ReplaceAllString(cleanMatch, "_$1_")
+			} else {
+				converted = cleanMatch
+			}
+			prefix := strings.TrimSuffix(match, cleanMatch)
+			replacements = append(replacements, replacement{cleanMatch, marker, converted})
+			result = strings.Replace(result, match, prefix+marker, 1)
+			counter++
 		}
 	}
 
-	// Escape special characters
+	// 6. Escape all special characters
 	specialChars := []string{"_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"}
 	for _, char := range specialChars {
 		result = strings.ReplaceAll(result, char, "\\"+char)
 	}
 
-	// Restore markdown patterns
-	for i := range protectedPatterns {
-		for j, match := range protectedPatterns[i].matches {
-			placeholder := strings.Replace(protectedPatterns[i].placeholder, "%d", string(rune(j)), 1)
-
-			// Convert to Telegram format
-			var converted string
-			switch i {
-			case 0: // **bold** -> *bold*
-				converted = regexp.MustCompile(`\*\*([^\*]+)\*\*`).ReplaceAllString(match, "*$1*")
-			case 1, 2: // *italic* or _italic_ -> _italic_
-				converted = regexp.MustCompile(`[\*_]([^\*_]+)[\*_]`).ReplaceAllString(match, "_$1_")
-			default:
-				converted = match
-			}
-
-			result = strings.Replace(result, "\\"+placeholder, converted, 1)
-		}
+	// 7. Restore preserved elements
+	for _, r := range replacements {
+		result = strings.Replace(result, r.marker, r.final, 1)
 	}
 
 	return result
