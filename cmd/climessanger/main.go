@@ -4,6 +4,7 @@ import (
 	"CLIMultiChat/internal/config"
 	messengers "CLIMultiChat/internal/integrations"
 	"CLIMultiChat/internal/integrations/slack"
+	"CLIMultiChat/internal/integrations/telegram"
 	"fmt"
 	"os"
 
@@ -71,6 +72,40 @@ var slackCmd = &cobra.Command{
 	},
 }
 
+var telegramCmd = &cobra.Command{
+	Use:   "telegram [chat_id] [повідомлення]",
+	Short: "В Telegram",
+	Long:  `Відправити повідомлення у Telegram. Якщо chat_id не вказано, використовується стандартний.`,
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var chatID, message string
+
+		if len(args) == 1 {
+			chatID = ""
+			message = args[0]
+		} else {
+			chatID = args[0]
+			message = args[1]
+		}
+
+		if err := cfg.ValidateTelegram(); err != nil {
+			return fmt.Errorf("telegram configuration error: %w", err)
+		}
+
+		client, err := telegram.NewClient(cfg.TelegramBotToken, cfg.TelegramChatID)
+		if err != nil {
+			return fmt.Errorf("failed to create Telegram client: %w", err)
+		}
+
+		if err := client.SendMessage(chatID, message); err != nil {
+			return err
+		}
+
+		fmt.Printf("Повідомлення надіслано у Telegram\n")
+		return nil
+	},
+}
+
 var allCmd = &cobra.Command{
 	Use:   "all [повідомлення]",
 	Short: "Усі месенджери",
@@ -95,6 +130,21 @@ var allCmd = &cobra.Command{
 			fmt.Println("Slack не налаштовано, пропущено")
 		}
 
+		if cfg.ValidateTelegram() == nil {
+			client, err := telegram.NewClient(cfg.TelegramBotToken, cfg.TelegramChatID)
+			if err != nil {
+				errors = append(errors, fmt.Errorf("telegram: %w", err))
+			} else {
+				if err := client.SendMessage("", message); err != nil {
+					errors = append(errors, fmt.Errorf("Telegram: %w", err))
+				} else {
+					fmt.Printf("Повідомлення надіслано у Telegram\n")
+				}
+			}
+		} else {
+			fmt.Println("Telegram не налаштовано, пропущено")
+		}
+
 		if len(errors) > 0 {
 			for _, err := range errors {
 				fmt.Fprintf(os.Stderr, "Помилка: %v\n", err)
@@ -108,6 +158,7 @@ var allCmd = &cobra.Command{
 
 func main() {
 	sendCmd.AddCommand(slackCmd)
+	sendCmd.AddCommand(telegramCmd)
 	sendCmd.AddCommand(allCmd)
 	rootCmd.AddCommand(sendCmd)
 
